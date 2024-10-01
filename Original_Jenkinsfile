@@ -1,0 +1,87 @@
+pipeline {
+    agent { 
+        label 'Agent1'
+    }
+    
+    tools {
+        maven 'maven'
+    }
+
+    environment {
+        DISPLAY = ":99"
+    }
+
+    stages {
+        stage('Install Dependencies') {
+            steps {
+                script {
+                    sh '''
+                    sudo apt-get update -y
+                    sudo apt-get install -y xvfb libxtst6 libxi6 libxrender1
+                    '''
+                }
+            }
+        }
+
+        stage('Set Up Xvfb') {
+            steps {
+                script {
+                    sh 'Xvfb :99 -screen 0 1024x768x24 &'
+                }
+            }
+        }
+
+        stage('Build with Maven') {
+            steps {
+                script {
+                    sh 'mvn clean package'
+                }
+            }
+        }
+
+        stage('Run SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonarqube_srv') {
+                    sh '''
+                    mvn verify
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to Artifactory') {
+            steps {
+                script {
+                    def server = Artifactory.server 'artifactory_srv'
+                    def uploadSpec = """{
+                        "files": [
+                            {
+                                "pattern": "target/*.jar",
+                                "target": "calc-local-repo/calculator/",
+                                "props": "build.number=${env.BUILD_NUMBER}"
+                            }
+                        ]
+                    }"""
+                    server.upload spec: uploadSpec
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            emailext (
+                subject: "Job '${JOB_NAME}' (${BUILD_NUMBER}) succeeded",
+                body: "Yay! The job '${JOB_NAME}' (${BUILD_NUMBER}) succeeded.\n\nBuild URL: ${BUILD_URL}",
+                to: 'goofygitlab@gmail.com'
+            )
+        }
+        failure {
+            emailext (
+                subject: "Job '${JOB_NAME}' (${BUILD_NUMBER}) failed",
+                body: "Oh no, the job '${JOB_NAME}' (${BUILD_NUMBER}) failed.\n\nBuild URL: ${BUILD_URL}",
+                to: 'goofygitlab@gmail.com'
+            )
+        }
+    }
+}
